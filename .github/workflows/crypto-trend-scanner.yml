@@ -1,32 +1,31 @@
-name: Crypto Trend Scanner
+name: Hybrid TrendPulse Scanner
 
 on:
   schedule:
-    # Run every hour for maximum market coverage
-    - cron: '*/30 * * * *'
-  workflow_dispatch: # Enable manual execution
+    - cron: '*/30 * * * *'    # every 30 minutes
+  workflow_dispatch:
 
 jobs:
-  trend-analysis:
+  scan:
     runs-on: ubuntu-latest
-    timeout-minutes: 360  # 6 hours maximum
-    
+    timeout-minutes: 15
+
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-      
-    - name: Configure Python environment
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.11'
-        
-    - name: Install required packages
-      run: |
-        pip install pandas numpy requests
-        
-    - name: Execute market trend analysis
-      env:
-        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        COINGECKO_API_KEY: ${{ secrets.COINGECKO_API_KEY }}
-      run: python crypto_trend_scanner.py
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install pandas numpy requests yfinance
+
+      - name: Run Hybrid Scanner
+        env:
+          COINGECKO_API_KEY: ${{ secrets.COINGECKO_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python crypto_trend_scanner.py
+
