@@ -1,28 +1,33 @@
+
 # .github/workflows/crypto-trend-scanner.yml
 
-name: TrendPulse 5m Scanner
+name: TrendPulse 15m Scanner
 
 on:
   schedule:
-    - cron: '*/5 * * * *'    # every 5 minutes
+    - cron: '*/5 * * * *'    # Every 5 minutes for 15m analysis
   workflow_dispatch:
 
 jobs:
   scan:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 12
 
     steps:
-      - uses: actions/checkout@v4
-      - name: Setup Python
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.11'
+
       - name: Install dependencies
         run: pip install pandas numpy requests yfinance
-      - name: Run TrendPulse Scanner
+
+      - name: Run TrendPulse 15m Scanner
         env:
           COINGECKO_API_KEY: ${{ secrets.COINGECKO_API_KEY }}
-          TELEGRAM_BOT_TOKEN:  ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID:    ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python crypto_trend_scanner.py
