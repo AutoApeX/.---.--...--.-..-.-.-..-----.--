@@ -60,7 +60,7 @@ class TrendPulse:
             'short_signal': bool(short_signal) if not pd.isna(short_signal) else False
         }
 
-# Global counters - declared at module level
+# Global counters
 results_lock = threading.Lock()
 
 def get_fast_coin_list(limit=100):
@@ -70,6 +70,11 @@ def get_fast_coin_list(limit=100):
         
         api_key = os.environ.get('COINGECKO_API_KEY', '')
         headers = {'X-CG-Pro-API-Key': api_key} if api_key else {}
+        
+        if api_key:
+            print("🔑 Using personal CoinGecko API key")
+        else:
+            print("⚠️ Using public CoinGecko API (may have stricter limits)")
         
         url = "https://api.coingecko.com/api/v3/coins/markets"
         params = {
@@ -81,6 +86,8 @@ def get_fast_coin_list(limit=100):
         }
         
         response = requests.get(url, params=params, headers=headers, timeout=15)
+        print(f"🌐 CoinGecko API response: {response.status_code}")
+        
         response.raise_for_status()
         data = response.json()
         
@@ -101,6 +108,13 @@ def get_fast_coin_list(limit=100):
                 })
         
         print(f"✅ Selected {len(qualified_coins)} qualified coins")
+        
+        # Debug: Show first 5 coins
+        if qualified_coins:
+            print("📊 Sample coins:")
+            for coin in qualified_coins[:5]:
+                print(f"   {coin['symbol']} ({coin['name']}) - ID: {coin['asset_id']}")
+        
         return qualified_coins
         
     except Exception as e:
@@ -108,7 +122,7 @@ def get_fast_coin_list(limit=100):
         return []
 
 def get_price_data_fast(asset_id):
-    """Fast price data retrieval with timeout"""
+    """Fast price data retrieval with enhanced debugging"""
     try:
         api_key = os.environ.get('COINGECKO_API_KEY', '')
         headers = {'X-CG-Pro-API-Key': api_key} if api_key else {}
@@ -116,11 +130,17 @@ def get_price_data_fast(asset_id):
         url = f"https://api.coingecko.com/api/v3/coins/{asset_id}/ohlc"
         params = {'vs_currency': 'usd', 'days': 7}
         
-        response = requests.get(url, params=params, headers=headers, timeout=10)
-        response.raise_for_status()
+        response = requests.get(url, params=params, headers=headers, timeout=15)
+        
+        # Debug API response
+        if response.status_code != 200:
+            print(f"⚠️ API Error for {asset_id}: {response.status_code} - {response.text[:100]}")
+            return None
+        
         data = response.json()
         
         if not data or len(data) < 50:
+            print(f"⚠️ Insufficient data for {asset_id}: {len(data) if data else 0} candles")
             return None
             
         df = pd.DataFrame(data, columns=['timestamp', 'open', 'high', 'low', 'close'])
@@ -134,6 +154,7 @@ def get_price_data_fast(asset_id):
         return df.tail(100)
         
     except Exception as e:
+        print(f"❌ Error fetching data for {asset_id}: {e}")
         return None
 
 def send_alert_fast(coin, signal_type):
@@ -143,6 +164,7 @@ def send_alert_fast(coin, signal_type):
         chat_id = os.environ.get('TELEGRAM_CHAT_ID')
         
         if not bot_token or not chat_id:
+            print("⚠️ Missing Telegram credentials")
             return False
         
         action = "🟢 LONG" if signal_type == 'long' else "🔴 SHORT"
@@ -162,20 +184,28 @@ def send_alert_fast(coin, signal_type):
         return response.status_code == 200
         
     except Exception as e:
+        print(f"❌ Telegram error: {e}")
         return False
 
-def analyze_single_coin(coin_data, counters):
-    """Analyze one coin (for parallel processing)"""
+def analyze_single_coin_debug(coin_data, counters):
+    """Analyze one coin with detailed debugging"""
     try:
+        print(f"🔍 Starting analysis for {coin_data['symbol']} (ID: {coin_data['asset_id']})")
+        
         cipher = TrendPulse()
         
         # Get price data
         price_df = get_price_data_fast(coin_data['asset_id'])
         if price_df is None:
+            print(f"❌ No data available for {coin_data['symbol']}")
             return None
             
+        print(f"✅ Got {len(price_df)} candles for {coin_data['symbol']}")
+        
         # Generate signals
         signals = cipher.generate_signals(price_df)
+        
+        print(f"📊 {coin_data['symbol']} signals: Long={signals['long_signal']}, Short={signals['short_signal']}")
         
         # Update processed counter
         with results_lock:
@@ -184,6 +214,7 @@ def analyze_single_coin(coin_data, counters):
         # Send alerts
         signal_sent = None
         if signals['long_signal']:
+            print(f"🟢 LONG SIGNAL DETECTED: {coin_data['symbol']}")
             if send_alert_fast(coin_data, 'long'):
                 with results_lock:
                     counters['alerts'] += 1
@@ -191,6 +222,7 @@ def analyze_single_coin(coin_data, counters):
                 signal_sent = "LONG"
                     
         elif signals['short_signal']:
+            print(f"🔴 SHORT SIGNAL DETECTED: {coin_data['symbol']}")
             if send_alert_fast(coin_data, 'short'):
                 with results_lock:
                     counters['alerts'] += 1
@@ -200,13 +232,14 @@ def analyze_single_coin(coin_data, counters):
         return {'symbol': coin_data['symbol'], 'signal': signal_sent}
         
     except Exception as e:
+        print(f"❌ Error analyzing {coin_data['symbol']}: {e}")
         return None
 
 def execute_fast_scan():
-    """Execute optimized parallel crypto scan"""
+    """Execute optimized parallel crypto scan with detailed debugging"""
     start_time = datetime.now()
-    print("⚡ FAST CRYPTO SCANNER STARTING")
-    print("=" * 50)
+    print("⚡ FAST CRYPTO SCANNER STARTING (DEBUG MODE)")
+    print("=" * 60)
     print(f"⏰ Start: {start_time.strftime('%H:%M:%S UTC')}")
     
     try:
@@ -218,68 +251,73 @@ def execute_fast_scan():
         }
         
         # Get coins (limited for speed)
-        coins = get_fast_coin_list(limit=100)  # Reduced for 5-10 minute execution
+        coins = get_fast_coin_list(limit=20)  # Reduced to 20 for debugging
         
         if not coins:
             print("❌ No coins to analyze")
             return
         
-        print(f"🎯 PARALLEL ANALYSIS OF {len(coins)} COINS")
-        print("💪 Using 15 concurrent threads...")
+        print(f"🎯 SEQUENTIAL ANALYSIS OF {len(coins)} COINS (DEBUG MODE)")
+        print("🔍 Processing coins one by one for detailed debugging...")
         
-        # Parallel processing with ThreadPoolExecutor
-        with ThreadPoolExecutor(max_workers=15) as executor:
-            # Submit all analysis tasks
-            future_to_coin = {executor.submit(analyze_single_coin, coin, counters): coin for coin in coins}
+        # Sequential processing for debugging (not parallel)
+        for i, coin in enumerate(coins, 1):
+            print(f"\n📊 [{i}/{len(coins)}] Processing {coin['symbol']}...")
+            result = analyze_single_coin_debug(coin, counters)
             
-            # Process results as they complete
-            completed = 0
-            for future in as_completed(future_to_coin):
-                completed += 1
-                result = future.result()
-                
-                if completed % 20 == 0:
-                    elapsed = (datetime.now() - start_time).total_seconds()
-                    print(f"⏳ Progress: {completed}/{len(coins)} coins ({elapsed:.0f}s)")
-                
-                # Gentle rate limiting
-                if completed % 50 == 0:
-                    time.sleep(2)
+            if result:
+                print(f"✅ Completed {coin['symbol']}")
+            else:
+                print(f"❌ Failed {coin['symbol']}")
+            
+            # Small delay between coins
+            time.sleep(0.5)
         
         # Final results
         total_time = (datetime.now() - start_time).total_seconds()
         
-        print("\n" + "=" * 50)
-        print("🎉 FAST SCAN COMPLETE")
-        print("=" * 50)
+        print("\n" + "=" * 60)
+        print("🎉 DEBUG SCAN COMPLETE")
+        print("=" * 60)
         print(f"⏱️  Total time: {total_time:.1f} seconds ({total_time/60:.1f} minutes)")
         print(f"📊 Coins processed: {counters['processed']}")
         print(f"🚨 Alerts sent: {counters['alerts']}")
-        print(f"🏃 Speed: {counters['processed']/(total_time/60):.1f} coins/minute")
+        
+        if counters['processed'] > 0:
+            print(f"🏃 Speed: {counters['processed']/(total_time/60):.1f} coins/minute")
         
         if counters['signals']:
             print(f"📈 Signals: {', '.join(counters['signals'])}")
+        else:
+            print("📊 No signals detected (normal - indicator is selective)")
             
         # Send summary
-        if counters['processed'] > 0:
-            try:
-                bot_token = os.environ.get('TELEGRAM_BOT_TOKEN')
-                chat_id = os.environ.get('TELEGRAM_CHAT_ID')
+        try:
+            bot_token = os.environ.get('TELEGRAM_BOT_TOKEN')
+            chat_id = os.environ.get('TELEGRAM_CHAT_ID')
+            
+            if bot_token and chat_id:
+                summary = f"🔍 <b>TrendPulse Debug Scan</b>\n\n"
+                summary += f"📊 Analyzed: {counters['processed']} coins\n"
+                summary += f"🚨 Alerts: {counters['alerts']}\n"
+                summary += f"⏱️ Time: {total_time:.1f}s\n"
+                summary += f"🤖 Debug mode active"
                 
-                if bot_token and chat_id:
-                    summary = f"⚡ <b>Fast TrendPulse Scan</b>\n\n"
-                    summary += f"📊 Analyzed: {counters['processed']} coins\n"
-                    summary += f"🚨 Alerts: {counters['alerts']}\n"
-                    summary += f"⏱️ Time: {total_time:.1f}s\n"
-                    summary += f"🏃 Speed: {counters['processed']/(total_time/60):.0f}/min"
-                    
-                    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-                    requests.post(url, data={'chat_id': chat_id, 'text': summary, 'parse_mode': 'HTML'}, timeout=5)
-            except:
-                pass
+                url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+                response = requests.post(url, data={'chat_id': chat_id, 'text': summary, 'parse_mode': 'HTML'}, timeout=5)
+                
+                if response.status_code == 200:
+                    print("✅ Summary sent to Telegram")
+                else:
+                    print(f"❌ Failed to send summary: {response.status_code}")
+        except Exception as e:
+            print(f"❌ Summary error: {e}")
             
     except Exception as e:
-        print(f"🚨 Error: {e}")
+        print(f"🚨 Critical error: {e}")
+        import traceback
+        print(traceback.format_exc())
 
 if __name__ == "__main__":
     execute_fast_scan()
+
