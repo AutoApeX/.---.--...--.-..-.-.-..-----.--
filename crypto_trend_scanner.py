@@ -232,73 +232,70 @@ def send_trading_alert(asset_info, signal_direction):
         print(f"❌ Alert system error: {e}")
         return False
 
+# Add this optimized version to your crypto_trend_scanner.py
+
 def execute_market_scan():
-    """Execute comprehensive cryptocurrency market analysis"""
+    """Optimized market scan with better rate limiting"""
     scan_start = datetime.now()
-    print("🌍 INITIATING COMPREHENSIVE CRYPTO MARKET SCAN")
-    print("=" * 65)
-    print(f"⏰ Scan Start: {scan_start.strftime('%Y-%m-%d %H:%M:%S UTC')}")
+    print("🌍 STARTING OPTIMIZED CRYPTO SCAN")
+    print(f"⏰ Start: {scan_start.strftime('%Y-%m-%d %H:%M:%S UTC')}")
     
     try:
-        # Initialize trend analysis engine
         trend_analyzer = TrendPulse()
         
-        # Discover all qualifying cryptocurrency assets
-        all_assets = fetch_all_qualifying_assets()
+        # LIMIT COINS FOR RELIABLE EXECUTION
+        MAX_COINS = 150  # Reduced for reliability
+        all_assets = fetch_all_qualifying_assets()[:MAX_COINS]
         
         if not all_assets:
-            print("❌ No qualifying assets discovered")
+            print("❌ No qualifying assets found")
             return
         
-        print(f"🎯 ANALYZING {len(all_assets)} CRYPTOCURRENCY ASSETS")
-        print("=" * 65)
+        print(f"🎯 ANALYZING {len(all_assets)} COINS (LIMITED FOR STABILITY)")
         
-        # Analysis tracking variables
-        alerts_dispatched = 0
-        assets_processed = 0
-        long_signals_detected = []
-        short_signals_detected = []
-        processing_errors = []
+        alerts_sent = 0
+        processed = 0
         
-        # Process each qualifying asset
         for index, asset in enumerate(all_assets, 1):
             try:
-                asset_display = f"{asset['symbol']:<8} ({asset['name'][:20]:<20})"
-                print(f"📊 [{index:3d}/{len(all_assets)}] Processing {asset_display}")
+                print(f"📊 [{index}/{len(all_assets)}] {asset['symbol']}")
                 
-                # Retrieve historical price data
-                price_history = get_price_history_with_retries(asset['asset_id'])
-                if price_history is None:
-                    processing_errors.append(f"Data unavailable: {asset['symbol']}")
+                # Get data with retries
+                price_data = get_price_history_with_retries(asset['asset_id'])
+                if not price_data:
                     continue
                 
-                # Execute trend analysis
-                signal_analysis = trend_analyzer.generate_signals(price_history)
-                assets_processed += 1
+                # Analyze
+                signals = trend_analyzer.generate_signals(price_data)
+                processed += 1
                 
-                # Process detected signals
-                if signal_analysis['long_signal']:
+                # Send alerts
+                if signals['long_signal']:
                     if send_trading_alert(asset, 'long'):
-                        alerts_dispatched += 1
-                        long_signals_detected.append(asset['symbol'])
-                        
-                elif signal_analysis['short_signal']:
+                        alerts_sent += 1
+                elif signals['short_signal']:
                     if send_trading_alert(asset, 'short'):
-                        alerts_dispatched += 1
-                        short_signals_detected.append(asset['symbol'])
+                        alerts_sent += 1
                 
-                # Implement intelligent rate limiting
-                if index % 30 == 0:
-                    print("   ⏳ API rate limit management pause...")
-                    time.sleep(2)
+                # IMPROVED RATE LIMITING
+                if index % 50 == 0:
+                    print("   ⏳ Rate limit break (10s)...")
+                    time.sleep(10)
+                elif index % 20 == 0:
+                    time.sleep(3)
                 else:
-                    time.sleep(0.1)
+                    time.sleep(1)  # 1 second between requests
                 
             except Exception as e:
-                error_detail = f"{asset['symbol']}: {str(e)}"
-                print(f"       ❌ {error_detail}")
-                processing_errors.append(error_detail)
+                print(f"   ❌ Error: {e}")
                 continue
+        
+        duration = (datetime.now() - scan_start).total_seconds()
+        print(f"\n✅ SCAN COMPLETE: {duration:.1f}s, {processed} coins, {alerts_sent} alerts")
+        
+    except Exception as e:
+        print(f"🚨 Critical error: {e}")
+
         
         # Generate comprehensive execution summary
         scan_duration = (datetime.now() - scan_start).total_seconds()
