@@ -60,11 +60,8 @@ class TrendPulse:
             'short_signal': bool(short_signal) if not pd.isna(short_signal) else False
         }
 
-# Global counters for thread safety
+# Global counters - declared at module level
 results_lock = threading.Lock()
-total_processed = 0
-total_alerts = 0
-successful_signals = []
 
 def get_fast_coin_list(limit=100):
     """Get limited coin list for fast execution"""
@@ -167,10 +164,8 @@ def send_alert_fast(coin, signal_type):
     except Exception as e:
         return False
 
-def analyze_single_coin(coin_data):
+def analyze_single_coin(coin_data, counters):
     """Analyze one coin (for parallel processing)"""
-    global total_processed, total_alerts, successful_signals
-    
     try:
         cipher = TrendPulse()
         
@@ -182,44 +177,45 @@ def analyze_single_coin(coin_data):
         # Generate signals
         signals = cipher.generate_signals(price_df)
         
+        # Update processed counter
         with results_lock:
-            global total_processed
-            total_processed += 1
+            counters['processed'] += 1
         
         # Send alerts
+        signal_sent = None
         if signals['long_signal']:
             if send_alert_fast(coin_data, 'long'):
                 with results_lock:
-                    global total_alerts
-                    total_alerts += 1
-                    successful_signals.append(f"{coin_data['symbol']} LONG")
+                    counters['alerts'] += 1
+                    counters['signals'].append(f"{coin_data['symbol']} LONG")
+                signal_sent = "LONG"
                     
         elif signals['short_signal']:
             if send_alert_fast(coin_data, 'short'):
                 with results_lock:
-                    global total_alerts
-                    total_alerts += 1
-                    successful_signals.append(f"{coin_data['symbol']} SHORT")
+                    counters['alerts'] += 1
+                    counters['signals'].append(f"{coin_data['symbol']} SHORT")
+                signal_sent = "SHORT"
         
-        return coin_data['symbol']
+        return {'symbol': coin_data['symbol'], 'signal': signal_sent}
         
     except Exception as e:
         return None
 
 def execute_fast_scan():
     """Execute optimized parallel crypto scan"""
-    global total_processed, total_alerts, successful_signals
-    
     start_time = datetime.now()
     print("⚡ FAST CRYPTO SCANNER STARTING")
     print("=" * 50)
     print(f"⏰ Start: {start_time.strftime('%H:%M:%S UTC')}")
     
     try:
-        # Reset counters
-        total_processed = 0
-        total_alerts = 0
-        successful_signals = []
+        # Initialize counters dictionary
+        counters = {
+            'processed': 0,
+            'alerts': 0,
+            'signals': []
+        }
         
         # Get coins (limited for speed)
         coins = get_fast_coin_list(limit=100)  # Reduced for 5-10 minute execution
@@ -234,13 +230,13 @@ def execute_fast_scan():
         # Parallel processing with ThreadPoolExecutor
         with ThreadPoolExecutor(max_workers=15) as executor:
             # Submit all analysis tasks
-            future_to_coin = {executor.submit(analyze_single_coin, coin): coin for coin in coins}
+            future_to_coin = {executor.submit(analyze_single_coin, coin, counters): coin for coin in coins}
             
             # Process results as they complete
             completed = 0
             for future in as_completed(future_to_coin):
                 completed += 1
-                symbol = future.result()
+                result = future.result()
                 
                 if completed % 20 == 0:
                     elapsed = (datetime.now() - start_time).total_seconds()
@@ -257,25 +253,25 @@ def execute_fast_scan():
         print("🎉 FAST SCAN COMPLETE")
         print("=" * 50)
         print(f"⏱️  Total time: {total_time:.1f} seconds ({total_time/60:.1f} minutes)")
-        print(f"📊 Coins processed: {total_processed}")
-        print(f"🚨 Alerts sent: {total_alerts}")
-        print(f"🏃 Speed: {total_processed/(total_time/60):.1f} coins/minute")
+        print(f"📊 Coins processed: {counters['processed']}")
+        print(f"🚨 Alerts sent: {counters['alerts']}")
+        print(f"🏃 Speed: {counters['processed']/(total_time/60):.1f} coins/minute")
         
-        if successful_signals:
-            print(f"📈 Signals: {', '.join(successful_signals)}")
+        if counters['signals']:
+            print(f"📈 Signals: {', '.join(counters['signals'])}")
             
         # Send summary
-        if total_processed > 0:
+        if counters['processed'] > 0:
             try:
                 bot_token = os.environ.get('TELEGRAM_BOT_TOKEN')
                 chat_id = os.environ.get('TELEGRAM_CHAT_ID')
                 
                 if bot_token and chat_id:
                     summary = f"⚡ <b>Fast TrendPulse Scan</b>\n\n"
-                    summary += f"📊 Analyzed: {total_processed} coins\n"
-                    summary += f"🚨 Alerts: {total_alerts}\n"
+                    summary += f"📊 Analyzed: {counters['processed']} coins\n"
+                    summary += f"🚨 Alerts: {counters['alerts']}\n"
                     summary += f"⏱️ Time: {total_time:.1f}s\n"
-                    summary += f"🏃 Speed: {total_processed/(total_time/60):.0f}/min"
+                    summary += f"🏃 Speed: {counters['processed']/(total_time/60):.0f}/min"
                     
                     url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
                     requests.post(url, data={'chat_id': chat_id, 'text': summary, 'parse_mode': 'HTML'}, timeout=5)
@@ -287,4 +283,3 @@ def execute_fast_scan():
 
 if __name__ == "__main__":
     execute_fast_scan()
-
