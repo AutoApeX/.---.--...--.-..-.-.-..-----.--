@@ -3,7 +3,7 @@ name: Crypto Trend Scanner
 on:
   schedule:
     # Run every hour for maximum market coverage
-    - cron: '0 * * * *'
+    - cron: '*/30 * * * *'
   workflow_dispatch: # Enable manual execution
 
 jobs:
