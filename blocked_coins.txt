@@ -1,0 +1,9 @@
+# Blocked Coins - One per line (lines starting with # are comments)
+# Add coins you don't want to receive alerts for
+
+WETH-USD
+WBTC-USD
+
+# You can add more coins here anytime
+# ADA-USD
+# SOL-USD
