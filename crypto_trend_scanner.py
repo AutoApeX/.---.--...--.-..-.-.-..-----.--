@@ -155,23 +155,34 @@ def get_ist_time_12h():
     return ist_now.strftime('%I:%M %p %d-%m-%Y')
 
 def send_telegram(coin, action, wt1_value, wt2_value):
-    """Send Telegram alert with indicator values for verification"""
+    """Send Telegram alert with TradingView chart link and current day"""
     token = os.environ.get('TELEGRAM_BOT_TOKEN')
     chat = os.environ.get('TELEGRAM_CHAT_ID')
     
     if not token or not chat:
         return
     
+    # Get IST time and day without pytz dependency
+    utc_now = datetime.utcnow()
+    ist_now = utc_now + timedelta(hours=5, minutes=30)
+    time_str = ist_now.strftime('%I:%M %p %d-%m-%Y')
+    day_str = ist_now.strftime('%A, %d %B %Y')
+    
+    # Build TradingView chart URL
+    base_symbol = coin['symbol'].replace('-USD', '') + 'USD'
+    tv_url = f"https://www.tradingview.com/chart/?symbol=COINBASE%3A{base_symbol}"
+    
     emoji = '🟢' if action == 'buy' else '🔴'
-    ist_time = get_ist_time_12h()
     
     message = f"{emoji} *TrendPulse Alert* {emoji}\n"
     message += f"{coin['symbol']} — *{action.upper()}*\n"
     message += f"📊 WT1: {wt1_value:.2f} | WT2: {wt2_value:.2f}\n"
     message += f"💰 Cap: ${coin['market_cap']:,}\n"
     message += f"📈 Vol24h: ${coin['total_volume']:,}\n"
-    message += f"🕐 {ist_time} IST\n"
-    message += f"⏰ 15-minute timeframe"
+    message += f"🕐 {time_str} IST\n"
+    message += f"📅 {day_str}\n"
+    message += f"⏰ 15-minute timeframe\n\n"
+    message += f"🔗 [View TradingView Chart]({tv_url})"
     
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     data = {'chat_id': chat, 'text': message, 'parse_mode': 'Markdown'}
@@ -184,6 +195,7 @@ def send_telegram(coin, action, wt1_value, wt2_value):
             print(f"❌ Telegram error: {response.status_code}")
     except Exception as e:
         print(f"❌ Telegram exception: {e}")
+
 
 def main():
     print("🕐 TrendPulse 15-Minute Scanner (Fixed Logic)")
