@@ -3,6 +3,9 @@
 
 WETH-USD
 WBTC-USD
+FET-USD
+
+
 
 # You can add more coins here anytime
 # ADA-USD
