@@ -3,12 +3,13 @@
 import pandas as pd
 import numpy as np
 import requests
+import yfinance as yf
 import os
 from datetime import datetime
 import time
 
 class TrendPulse:
-    """TrendPulse: Working 30-minute analysis"""
+    """TrendPulse: 30-minute candle analysis"""
     def __init__(self):
         self.ch_len = 9
         self.avg_len = 12
@@ -25,14 +26,15 @@ class TrendPulse:
         c = s1 - s2
         return ((p < 0) & (c > 0)) | ((p > 0) & (c < 0))
 
-    def analyze(self, prices):
-        """Analyze price series for signals"""
-        if len(prices) < 25:
+    def analyze(self, closes: pd.Series):
+        """Generate buy/sell signals from 30-minute closes"""
+        if len(closes) < self.ch_len + self.avg_len:
             return False, False
 
-        esa = self.ema(prices, self.ch_len)
-        dev = self.ema(abs(prices - esa), self.ch_len)
-        ci = (prices - esa) / (0.015 * dev)
+        esa = self.ema(closes, self.ch_len)
+        dev = self.ema(abs(closes - esa), self.ch_len)
+        ci = (closes - esa) / (0.015 * dev)
+
         wt1 = self.ema(ci, self.avg_len)
         wt2 = self.sma(wt1, self.smooth_len)
 
@@ -46,194 +48,98 @@ class TrendPulse:
         sell = bool(crossed.iloc[-1] and dn.iloc[-1] and overbought.iloc[-1])
         return buy, sell
 
-def get_coin_list():
-    """Get coin list without sparkline - avoids 400 errors"""
+def fetch_gecko_coins(min_cap=50_000_000, min_vol=30_000_000, limit=250):
+    """Fetch and filter coins by Market Cap and 24h Volume from CoinGecko"""
     api_key = os.environ.get('COINGECKO_API_KEY', '')
-    
-    # Always use public API endpoint to avoid authentication issues
     url = "https://api.coingecko.com/api/v3/coins/markets"
-    
-    # Use demo API key header format if available
     headers = {}
     if api_key:
         headers = {'x-cg-demo-api-key': api_key}
-    
     params = {
         'vs_currency': 'usd',
         'order': 'market_cap_desc',
-        'per_page': 100,
-        'page': 1
-        # NO sparkline parameter - this causes 400 errors
+        'per_page': limit,
+        'page': 1,
     }
-    
     try:
-        response = requests.get(url, params=params, headers=headers, timeout=20)
-        print(f"📡 API Status: {response.status_code}")
-        
-        if response.status_code != 200:
-            print(f"❌ Error details: {response.text[:300]}")
-            
-        response.raise_for_status()
-        return response.json()
-        
+        r = requests.get(url, params=params, headers=headers, timeout=20)
+        r.raise_for_status()
+        data = r.json()
     except Exception as e:
-        print(f"❌ Request failed: {e}")
+        print(f"❌ CoinGecko error: {e}")
         return []
 
-def get_price_data(coin_id):
-    """Get simple price history"""
-    api_key = os.environ.get('COINGECKO_API_KEY', '')
-    
-    url = f"https://api.coingecko.com/api/v3/coins/{coin_id}/market_chart"
-    
-    headers = {}
-    if api_key:
-        headers = {'x-cg-demo-api-key': api_key}
-    
-    params = {
-        'vs_currency': 'usd',
-        'days': 2,  # Just 2 days for 30-minute intervals
-        'interval': 'hourly'
-    }
-    
+    filtered = []
+    stablecoins = {'USDT','USDC','DAI','BUSD','USDE','FDUSD'}
+    for coin in data:
+        if (coin.get('market_cap',0) >= min_cap and
+            coin.get('total_volume',0) >= min_vol and
+            coin['symbol'].upper() not in stablecoins):
+            symbol = coin['symbol'].upper() + "-USD"
+            filtered.append({
+                'id': coin['id'],
+                'symbol': symbol,
+                'name': coin['name'],
+                'market_cap': coin['market_cap'],
+                'total_volume': coin['total_volume']
+            })
+    print(f"✅ Filtered {len(filtered)} coins from CoinGecko")
+    return filtered
+
+def get_yahoo_data(symbol):
+    """Retrieve last 7 days of 30-minute OHLC from Yahoo Finance"""
     try:
-        response = requests.get(url, params=params, headers=headers, timeout=10)
-        
-        if response.status_code != 200:
+        ticker = yf.Ticker(symbol)
+        df = ticker.history(period="7d", interval="1h")
+        if df is None or len(df) < 24:
             return None
-            
-        data = response.json()
-        
-        # Extract prices and convert to 30-minute intervals
-        prices = [point[1] for point in data['prices']]
-        
-        # Create 30-minute intervals by interpolation
-        if len(prices) >= 24:  # Need at least 24 hours
-            extended_prices = []
-            for i in range(len(prices)-1):
-                extended_prices.append(prices[i])
-                # Add midpoint for 30-minute interval
-                midpoint = (prices[i] + prices[i+1]) / 2
-                extended_prices.append(midpoint)
-            extended_prices.append(prices[-1])
-            
-            return pd.Series(extended_prices[-48:])  # Last 48 30-minute intervals
-            
-        return None
-        
+        df30 = df.resample("30T").agg({
+            'Open':'first','High':'max','Low':'min','Close':'last'
+        }).dropna().tail(100)
+        return df30
     except Exception as e:
+        print(f"❌ Yahoo error for {symbol}: {e}")
         return None
 
 def send_telegram(coin, action):
     """Send Telegram alert"""
     token = os.environ.get('TELEGRAM_BOT_TOKEN')
-    chat = os.environ.get('TELEGRAM_CHAT_ID')
-    
+    chat  = os.environ.get('TELEGRAM_CHAT_ID')
     if not token or not chat:
-        print("⚠️ Telegram not configured")
         return
-    
-    emoji = '🟢' if action == 'buy' else '🔴'
-    signal = action.upper()
-    
-    message = f"{emoji} *TrendPulse Alert* {emoji}\n"
-    message += f"{coin['symbol'].upper()} — *{signal}*\n"
-    message += f"⏰ 30m Timeframe\n"
-    message += f"📊 Cap: ${coin['market_cap']:,}\n"
-    message += f"📈 Vol: ${coin['total_volume']:,}\n"
-    message += f"🕐 {datetime.utcnow().strftime('%H:%M UTC')}"
-    
+    emoji = '🟢' if action=='buy' else '🔴'
+    message = (
+        f"{emoji} *TrendPulse Alert* {emoji}\n"
+        f"{coin['symbol']} — *{action.upper()}*\n"
+        f"📊 Cap: ${coin['market_cap']:,}\n"
+        f"📈 Vol24h: ${coin['total_volume']:,}\n"
+        f"🕐 {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}"
+    )
     url = f"https://api.telegram.org/bot{token}/sendMessage"
-    data = {
-        'chat_id': chat,
-        'text': message,
-        'parse_mode': 'Markdown'
-    }
-    
-    try:
-        response = requests.post(url, data=data, timeout=5)
-        if response.status_code == 200:
-            print(f"✅ Alert sent: {coin['symbol']} {signal}")
-        else:
-            print(f"❌ Telegram failed: {response.status_code}")
-    except Exception as e:
-        print(f"❌ Telegram error: {e}")
+    requests.post(url, data={'chat_id':chat,'text':message,'parse_mode':'Markdown'})
 
 def main():
-    """Main execution function"""
-    print("🕐 TrendPulse 30m Scanner Starting...")
-    start_time = datetime.utcnow()
-    
+    print("🕐 Hybrid TrendPulse Scanner Starting...")
     tp = TrendPulse()
-    
-    # Get coin list
-    coins = get_coin_list()
-    if not coins:
-        print("❌ Failed to get coin list")
-        return
-    
-    print(f"📊 Processing {len(coins)} coins...")
-    
-    signals_count = 0
-    processed_count = 0
-    
-    for i, coin in enumerate(coins):
-        # Filter by market cap and volume
-        if coin['market_cap'] < 50_000_000 or coin['total_volume'] < 30_000_000:
-            continue
-        
-        print(f"  [{i+1}/{len(coins)}] {coin['symbol']} - ${coin['market_cap']:,.0f}")
-        
-        # Get price data
-        prices = get_price_data(coin['id'])
-        if prices is None or len(prices) < 25:
-            continue
-        
-        processed_count += 1
-        
-        # Analyze for signals
-        buy, sell = tp.analyze(prices)
-        
-        if buy:
-            send_telegram(coin, 'buy')
-            signals_count += 1
-            print(f"    🟢 BUY signal detected!")
-            
-        elif sell:
-            send_telegram(coin, 'sell')
-            signals_count += 1
-            print(f"    🔴 SELL signal detected!")
-        
-        # Rate limiting
-        time.sleep(0.2)  # 5 calls per second max
-    
-    # Summary
-    execution_time = (datetime.utcnow() - start_time).total_seconds()
-    
-    print(f"\n✅ Scan Complete:")
-    print(f"   ⏱️  Time: {execution_time:.1f} seconds")
-    print(f"   📊 Processed: {processed_count} coins")
-    print(f"   🚨 Signals: {signals_count}")
-    
-    # Send completion notice
-    try:
-        token = os.environ.get('TELEGRAM_BOT_TOKEN')
-        chat = os.environ.get('TELEGRAM_CHAT_ID')
-        
-        if token and chat:
-            summary = f"📊 *TrendPulse Scan Complete*\n"
-            summary += f"Processed: {processed_count} coins\n"
-            summary += f"Signals: {signals_count}\n"
-            summary += f"Time: {execution_time:.1f}s"
-            
-            url = f"https://api.telegram.org/bot{token}/sendMessage"
-            requests.post(url, data={
-                'chat_id': chat,
-                'text': summary,
-                'parse_mode': 'Markdown'
-            }, timeout=5)
-    except:
-        pass
+    coins = fetch_gecko_coins()
+    processed = 0; signals = 0
 
-if __name__ == "__main__":
+    for coin in coins:
+        print(f"🔍 Analyzing {coin['symbol']}...")
+        df30 = get_yahoo_data(coin['symbol'])
+        if df30 is None:
+            continue
+        processed += 1
+        buy, sell = tp.analyze(df30['Close'])
+        if buy:
+            send_telegram(coin, 'buy'); signals += 1; print("  🟢 BUY")
+        elif sell:
+            send_telegram(coin, 'sell'); signals += 1; print("  🔴 SELL")
+        else:
+            print("  📊 No signal")
+        time.sleep(1)
+
+    print(f"✅ Completed: {processed} coins, {signals} signals")
+
+if __name__=="__main__":
     main()
